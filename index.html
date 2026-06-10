@@ -398,12 +398,12 @@ let SYNC_OK = true;
 const memStore = {};
 const Store = {
   async get(){
-    if(!window.storage){ SYNC_OK=false; return memStore[KEY]||null; }
+    if(!window.storage){ SYNC_OK=false; return localStorage.getItem(KEY)||null; }
     try{ const r = await window.storage.get(KEY, true); return r? r.value : null; }
     catch(e){ return null; } // key may not exist yet
   },
   async set(v){
-    if(!window.storage){ SYNC_OK=false; memStore[KEY]=v; return; }
+    if(!window.storage){ SYNC_OK=false; localStorage.setItem(KEY, v); return; }
     try{ await window.storage.set(KEY, v, true); }
     catch(e){ console.error(e); }
   }
