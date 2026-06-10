@@ -148,6 +148,10 @@ textarea.players{min-height:150px;resize:vertical;line-height:1.5;font-size:13px
 .tab{padding:8px 13px;font-size:12px;font-weight:800;color:var(--muted);border-radius:8px;border:1px solid transparent;letter-spacing:.04em}
 .tab.on{color:var(--chalk);background:var(--surface2);border-color:var(--line2)}
 .board-scroll{overflow:auto;padding:14px}
+#boardCard.expanded{position:fixed;inset:0;z-index:40;border-radius:0;display:flex;flex-direction:column}
+#boardCard.expanded .tabs{flex-shrink:0}
+#boardCard.expanded .board-scroll,#boardCard.expanded .rosters{flex:1;max-height:none;overflow:auto;min-height:0}
+#boardCard.expanded .rcard{overflow:visible}
 .board{display:grid;gap:8px;min-width:max-content}
 .bcol{display:flex;flex-direction:column;gap:6px}
 .bcol .bteam{font-weight:900;font-size:12px;letter-spacing:.03em;padding:7px 9px;border-radius:8px;background:var(--surface2);
@@ -398,10 +402,12 @@ textarea.players{min-height:150px;resize:vertical;line-height:1.5;font-size:13px
       </div>
 
       <!-- board / rosters -->
-      <div class="card">
+      <div class="card" id="boardCard">
         <div class="tabs">
           <button class="tab on" data-view="board">Draft Board</button>
           <button class="tab" data-view="rosters">Rosters</button>
+          <div class="spacer"></div>
+          <button class="btn ghost mini" id="expandBoardBtn" title="Expand board" style="margin-bottom:6px"></button>
         </div>
         <div id="boardWrap" class="board-scroll"></div>
         <div id="rosterWrap" class="rosters hidden"></div>
@@ -1510,6 +1516,17 @@ function toggleCommissioner(){
   }
 }
 $('#commBtn').onclick=toggleCommissioner;
+const EXPAND_ICON=`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>`;
+const COMPRESS_ICON=`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/></svg>`;
+function toggleBoardExpand(){
+  const expanded=$('#boardCard').classList.toggle('expanded');
+  $('#expandBoardBtn').innerHTML=expanded?COMPRESS_ICON:EXPAND_ICON;
+}
+$('#expandBoardBtn').innerHTML=EXPAND_ICON;
+$('#expandBoardBtn').onclick=toggleBoardExpand;
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&$('#boardCard').classList.contains('expanded')) toggleBoardExpand();
+});
 $$('#mobileDraftTabs .mtab').forEach(btn=>{
   btn.onclick=()=>{
     $$('#mobileDraftTabs .mtab').forEach(b=>b.classList.remove('on'));
