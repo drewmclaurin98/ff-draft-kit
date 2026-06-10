@@ -213,6 +213,7 @@ textarea.players{min-height:150px;resize:vertical;line-height:1.5;font-size:13px
       </div>
     </div>
     <div class="spacer"></div>
+    <button class="btn ghost" id="commBtn"></button>
     <div class="sync"><span class="dot" id="syncDot"></span><span id="syncTxt">Connecting…</span></div>
   </div>
 
@@ -310,6 +311,14 @@ textarea.players{min-height:150px;resize:vertical;line-height:1.5;font-size:13px
     <div class="controls" style="justify-content:flex-end;margin-top:20px">
       <button class="btn ghost" id="resumeBtn">Resume existing draft</button>
       <button class="btn primary" id="startBtn">Start Draft →</button>
+    </div>
+  </div>
+
+  <!-- ========================= WAITING ========================= -->
+  <div id="waitingView" class="hidden">
+    <div class="card" style="padding:40px;text-align:center;margin-top:40px">
+      <div style="font-family:'Anton';font-size:28px;margin-bottom:10px">Waiting for draft to start</div>
+      <div style="color:var(--muted);font-size:14px">The commissioner hasn't started the draft yet. This page will update automatically.</div>
     </div>
   </div>
 
@@ -413,6 +422,10 @@ if (FIREBASE_CONFIG.databaseURL) {
   firebase.initializeApp(FIREBASE_CONFIG);
   db = firebase.database();
 }
+
+/* Commissioner PIN */
+const COMMISSIONER_PIN = "godmode";
+let isCommissioner = sessionStorage.getItem('comm_pin') === COMMISSIONER_PIN;
 
 /* =====================================================================
    STORAGE LAYER — uses Firebase when configured, localStorage otherwise.
@@ -1023,10 +1036,12 @@ if(db){
 ===================================================================== */
 function enterDraft(){
   $('#setupView').classList.add('hidden');
+  $('#waitingView').classList.add('hidden');
   $('#draftView').classList.remove('hidden');
   buildPoolFilters();
   buildQueueTeamSelect();
   renderDraft();
+  applyCommissionerMode();
 }
 
 function buildPoolFilters(){
@@ -1379,6 +1394,48 @@ $('#modalBg').onclick=e=>{ if(e.target===$('#modalBg')) $('#modalBg').classList.
 $('#modalOk').onclick=async()=>{ $('#modalBg').classList.remove('show'); if(modalAction) await modalAction(); };
 
 /* =====================================================================
+   COMMISSIONER MODE
+===================================================================== */
+function applyCommissionerMode(){
+  const comm=isCommissioner;
+  const btn=$('#commBtn');
+  if(btn){
+    btn.textContent=comm?'🔓 Commissioner':'🔒 Commissioner';
+    btn.style.color=comm?'var(--turf)':'';
+    btn.style.borderColor=comm?'var(--turf)':'';
+  }
+  ['autopickBtn','undoBtn','resetBtn','editPoolBtn'].forEach(id=>{
+    const el=$('#'+id); if(el) el.classList.toggle('hidden',!comm);
+  });
+  const qp=document.querySelector('.queue-panel');
+  if(qp) qp.classList.toggle('hidden',!comm);
+  // if non-commissioner is on setup screen, send to waiting view
+  if(!comm && !$('#setupView').classList.contains('hidden')){
+    $('#setupView').classList.add('hidden');
+    $('#waitingView').classList.remove('hidden');
+  }
+}
+function toggleCommissioner(){
+  if(isCommissioner){
+    isCommissioner=false;
+    sessionStorage.removeItem('comm_pin');
+    applyCommissionerMode();
+    return;
+  }
+  const pin=prompt('Enter commissioner PIN:');
+  if(pin===null) return;
+  if(pin===COMMISSIONER_PIN){
+    isCommissioner=true;
+    sessionStorage.setItem('comm_pin',COMMISSIONER_PIN);
+    applyCommissionerMode();
+    toast('Commissioner mode unlocked',true);
+  } else {
+    toast('Incorrect PIN');
+  }
+}
+$('#commBtn').onclick=toggleCommissioner;
+
+/* =====================================================================
    BOOT — auto-resume if a draft already exists in shared storage
 ===================================================================== */
 (async function boot(){
@@ -1391,6 +1448,7 @@ $('#modalOk').onclick=async()=>{ $('#modalBg').classList.remove('show'); if(moda
       }
     }catch(e){}
   }
+  applyCommissionerMode();
   setSync(true);
 })();
 </script>
