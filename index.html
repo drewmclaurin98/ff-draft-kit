@@ -20,10 +20,17 @@
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
+/* Custom scrollbars */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--line2);border-radius:999px}
+::-webkit-scrollbar-thumb:hover{background:var(--muted2)}
+*{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
 body{
   background:
     repeating-linear-gradient(90deg, transparent 0 calc(10% - 1px), rgba(255,255,255,.018) calc(10% - 1px) 10%),
     radial-gradient(120% 90% at 50% -10%, #11201a 0%, var(--bg) 55%);
+  background-attachment:fixed;
   color:var(--chalk);
   font-family:'Archivo',system-ui,sans-serif;
   font-feature-settings:"tnum" 1;
@@ -111,7 +118,8 @@ textarea.players{min-height:150px;resize:vertical;line-height:1.5;font-size:13px
 .timer.low .t{color:var(--clock)}
 .timer .lbl{font-size:10px;font-weight:800;color:var(--muted);letter-spacing:.14em;text-transform:uppercase}
 
-.main{display:grid;grid-template-columns:1.05fr 1.4fr;gap:16px;align-items:start}
+.main{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:start}
+.main>*{min-width:0}
 
 /* available players */
 .pool .pool-head{display:flex;gap:10px;align-items:center;padding:14px 14px 0}
@@ -194,12 +202,43 @@ textarea.players{min-height:150px;resize:vertical;line-height:1.5;font-size:13px
 .toast.win{border-color:var(--turf);color:var(--turf)}
 
 .hidden{display:none!important}
+
+/* Mobile draft tabs — hidden on desktop, shown via 600px query */
+.mobile-tabs{display:none;border-radius:10px;overflow:hidden;border:1px solid var(--line2);margin-bottom:12px}
+.mtab{flex:1;padding:11px;font-size:13px;font-weight:800;background:var(--bg2);color:var(--muted);border:none;border-right:1px solid var(--line2)}
+.mtab:last-child{border-right:none}
+.mtab.on{background:var(--surface2);color:var(--chalk)}
+
 @media(max-width:880px){
   .setup-grid{grid-template-columns:1fr}
   .main{grid-template-columns:1fr}
   .clockbar{grid-template-columns:1fr;text-align:center;gap:10px}
   .timer{flex-direction:row;justify-content:center;gap:8px;align-items:baseline}
   .plist{max-height:48vh}
+}
+@media(max-width:600px){
+  /* Topbar — compact */
+  .brand .sub{display:none}
+  .brand .mark{width:32px;height:32px;font-size:16px;border-radius:9px}
+  .brand .name{font-size:18px}
+  #commBtn{font-size:11px;padding:7px 10px}
+  .sync{font-size:11px}
+  /* Draft layout — tabbed panels */
+  .mobile-tabs{display:flex}
+  .main{display:block}
+  .main>*:last-child{display:none}
+  .main.show-board>.pool{display:none}
+  .main.show-board>*:last-child{display:block}
+  /* Player rows — always show Draft/+Q (no hover on touch) */
+  .prow .acts{opacity:1}
+  .mini{padding:9px 13px;font-size:13px}
+  .plist{max-height:calc(100vh - 300px);min-height:180px}
+  /* Controls */
+  .controls{gap:8px}
+  .controls .btn{flex:1 1 120px}
+  /* Clockbar */
+  .clk-meta .pk{font-size:22px}
+  .timer .t{font-size:26px}
 }
 </style>
 
@@ -337,6 +376,11 @@ textarea.players{min-height:150px;resize:vertical;line-height:1.5;font-size:13px
         <span class="t" id="timerT">90</span>
         <span class="lbl">on clock</span>
       </div>
+    </div>
+
+    <div id="mobileDraftTabs" class="mobile-tabs">
+      <button class="mtab on" data-panel="pool">Players</button>
+      <button class="mtab" data-panel="board">Board</button>
     </div>
 
     <div class="main">
@@ -1062,6 +1106,10 @@ function enterDraft(){
   buildQueueTeamSelect();
   renderDraft();
   applyCommissionerMode();
+  // reset mobile tabs to Players panel
+  $('.main').classList.remove('show-board');
+  $$('#mobileDraftTabs .mtab').forEach(b=>b.classList.remove('on'));
+  $('#mobileDraftTabs .mtab[data-panel="pool"]').classList.add('on');
 }
 
 function buildPoolFilters(){
@@ -1461,6 +1509,13 @@ function toggleCommissioner(){
   }
 }
 $('#commBtn').onclick=toggleCommissioner;
+$$('#mobileDraftTabs .mtab').forEach(btn=>{
+  btn.onclick=()=>{
+    $$('#mobileDraftTabs .mtab').forEach(b=>b.classList.remove('on'));
+    btn.classList.add('on');
+    $('.main').classList.toggle('show-board', btn.dataset.panel==='board');
+  };
+});
 
 /* =====================================================================
    BOOT — auto-resume if a draft already exists in shared storage
