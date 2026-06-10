@@ -866,7 +866,27 @@ function sheetRows(wb,kw){ const nm=wb.SheetNames.find(n=>n.toLowerCase().includ
 function toObjs(rows){ if(!rows||!rows.length) return []; const h=rows[0].map(x=>String(x||'').trim().toLowerCase());
   return rows.slice(1).map(r=>{ const o={}; h.forEach((k,i)=>o[k]=r[i]); return o; }); }
 function col(o,...keys){ for(const k of keys) for(const key in o) if(key.includes(k) && o[key]!=null && o[key]!=='') return o[key]; }
-function applyImport(wb){
+async function applyImport(wb){
+  // If this file came from a mid-draft export, restore full state directly
+  const stateSheetName=wb.SheetNames.find(n=>n==='Draft State');
+  if(stateSheetName){
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[stateSheetName],{header:1,blankrows:false});
+    if(rows.length>=2 && rows[1][0]){
+      try{
+        const s=JSON.parse(String(rows[1][0]));
+        if(s && s.status && s.config && s.players && Array.isArray(s.picks)){
+          state=s; localVersion=s.version;
+          await commit();
+          enterDraft();
+          const pickCount=s.picks.filter(p=>!p.keeper).length;
+          infoModal('Draft resumed','Restored <b>'+pickCount+'</b> picks. Continuing where you left off.');
+          return;
+        }
+      }catch(e){}
+    }
+    toast('Could not read draft state from file');
+    return;
+  }
   const warns=[];
   // Settings (key/value)
   let leagueName=null,rounds=null,snake=null;
@@ -1347,9 +1367,16 @@ function exportXlsx(){
   const ws2=XLSX.utils.aoa_to_sheet(s2);
   ws2['!cols']=cfg.teams.map(()=>({wch:26}));
 
+  // Sheet 3 — Draft State (full JSON snapshot; import this file to resume the draft)
+  const wsState=XLSX.utils.aoa_to_sheet([
+    ['Draft State JSON — do not edit this sheet'],
+    [JSON.stringify(state)]
+  ]);
+
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws1, 'Picks by Round');
   XLSX.utils.book_append_sheet(wb, ws2, 'Rosters');
+  XLSX.utils.book_append_sheet(wb, wsState, 'Draft State');
   const base=((cfg.leagueName||'draft').replace(/[^a-z0-9]+/gi,'-').replace(/^-+|-+$/g,'').toLowerCase())||'draft';
   const fname=base+'-draft-results.xlsx';
   const out=XLSX.write(wb,{bookType:'xlsx',type:'array'});
@@ -1358,7 +1385,7 @@ function exportXlsx(){
 }
 function showExportModal(url,fname,count){
   $('#modalTitle').textContent='Export ready';
-  $('#modalBody').innerHTML='Built <b>'+count+'</b> picks across two sheets — <b>Picks by Round</b> and <b>Rosters</b>. Tap to save the file to your <b>Downloads</b> folder:<br><br><a class="btn primary" style="text-decoration:none" href="'+url+'" download="'+fname+'" target="_blank" rel="noopener">⬇ Save '+fname+'</a>';
+  $('#modalBody').innerHTML='Built <b>'+count+'</b> picks across two sheets — <b>Picks by Round</b> and <b>Rosters</b>. Tap to save the file to your <b>Downloads</b> folder:<br><br><a class="btn primary" style="text-decoration:none" href="'+url+'" download="'+fname+'" target="_blank" rel="noopener">⬇ Save '+fname+'</a><br><br><span style="font-size:12px;color:var(--muted)">To resume this draft later, import this same file — it will restore all picks exactly where you left off.</span>';
   $('#modalCancel').classList.add('hidden');
   $('#modalOk').textContent='Done'; modalAction=null;
   $('#modalBg').classList.add('show');
