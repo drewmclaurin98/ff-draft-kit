@@ -1232,6 +1232,7 @@ function renderBoard(){
   cfg.teams.forEach((t,ti)=>{
     const head=document.createElement('div');
     head.className='bteam'+(ti===upTeamIdx?' up':'');
+    head.dataset.col=ti;
     head.textContent=t.name;
     board.appendChild(head);
     for(let r=0;r<cfg.rounds;r++){
@@ -1264,6 +1265,20 @@ function renderBoard(){
     }
   });
   wrap.appendChild(board);
+  scrollBoardToLastPick();
+}
+
+function scrollBoardToLastPick(){
+  if(!state||!state.picks.length) return;
+  const lastOv=state.picks.length-1;
+  const {teamIdx}=teamForPick(lastOv);
+  const wrap=$('#boardWrap');
+  const header=wrap.querySelector(`[data-col="${teamIdx}"]`);
+  if(!header) return;
+  const wrapRect=wrap.getBoundingClientRect();
+  const headerRect=header.getBoundingClientRect();
+  const target=wrap.scrollLeft+headerRect.left-wrapRect.left+headerRect.width/2-wrapRect.width/2;
+  wrap.scrollTo({left:Math.max(0,target),behavior:'smooth'});
 }
 
 /* ---- rosters ---- */
