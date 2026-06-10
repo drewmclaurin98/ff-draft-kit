@@ -7,6 +7,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <style>
 :root{
   --bg:#0a0e0c; --bg2:#0f1512; --surface:#141d18; --surface2:#1b2720;
@@ -390,22 +392,51 @@ textarea.players{min-height:150px;resize:vertical;line-height:1.5;font-size:13px
 
 <script>
 /* =====================================================================
-   STORAGE LAYER  — shared across every device viewing this artifact.
-   Falls back to in-memory if window.storage is unavailable (no sync).
+   FIREBASE CONFIG — fill in your project values to enable live sync
+   across all devices. Leave databaseURL empty to run local-only.
+   Setup: console.firebase.google.com → New project → Realtime Database
+   (start in test mode) → Project Settings → Web app → copy config here.
+===================================================================== */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDZWl-fjoDvoZfajkPECfwq1Ww5wpIiJeU",
+  authDomain: "ff-draft-kit-80e75.firebaseapp.com",
+  databaseURL: "https://ff-draft-kit-80e75-default-rtdb.firebaseio.com",
+  projectId: "ff-draft-kit-80e75",
+  storageBucket: "ff-draft-kit-80e75.firebasestorage.app",
+  messagingSenderId: "931861917689",
+  appId: "1:931861917689:web:8763c9ee621760093a9728",
+  measurementId: "G-MQM08GL995"
+};
+
+let db = null;
+if (FIREBASE_CONFIG.databaseURL) {
+  firebase.initializeApp(FIREBASE_CONFIG);
+  db = firebase.database();
+}
+
+/* =====================================================================
+   STORAGE LAYER — uses Firebase when configured, localStorage otherwise.
 ===================================================================== */
 const KEY = 'ffdraft:state:v1';
 let SYNC_OK = true;
-const memStore = {};
 const Store = {
   async get(){
-    if(!window.storage){ SYNC_OK=false; return localStorage.getItem(KEY)||null; }
-    try{ const r = await window.storage.get(KEY, true); return r? r.value : null; }
-    catch(e){ return null; } // key may not exist yet
+    if(!db){
+      if(!window.storage){ SYNC_OK=false; return localStorage.getItem(KEY)||null; }
+      try{ const r = await window.storage.get(KEY, true); return r? r.value : null; }
+      catch(e){ return null; }
+    }
+    const snap = await db.ref(KEY).once('value');
+    return snap.val();
   },
   async set(v){
-    if(!window.storage){ SYNC_OK=false; localStorage.setItem(KEY, v); return; }
-    try{ await window.storage.set(KEY, v, true); }
-    catch(e){ console.error(e); }
+    if(!db){
+      if(!window.storage){ SYNC_OK=false; localStorage.setItem(KEY, v); return; }
+      try{ await window.storage.set(KEY, v, true); }
+      catch(e){ console.error(e); }
+      return;
+    }
+    await db.ref(KEY).set(v);
   }
 };
 
@@ -966,7 +997,26 @@ function setSync(ok){
   if(ok){ dot.className='dot'; txt.textContent='Live · synced'; }
   else { dot.className='dot warn'; txt.textContent='Reconnecting…'; }
 }
-setInterval(poll, 2500);
+if(db){
+  db.ref(KEY).on('value', snap=>{
+    if(muteSync) return;
+    setSync(true);
+    const raw=snap.val();
+    if(!raw) return;
+    try{
+      const incoming=JSON.parse(raw);
+      if(incoming.version!==localVersion){
+        state=incoming; localVersion=incoming.version;
+        if(state.status==='drafting'||state.status==='done'){
+          if($('#setupView').classList.contains('hidden')) renderDraft();
+          else enterDraft();
+        }
+      }
+    }catch(e){ setSync(false); }
+  });
+} else {
+  setInterval(poll, 2500);
+}
 
 /* =====================================================================
    DRAFT VIEW
