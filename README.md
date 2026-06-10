@@ -1,4 +1,4 @@
-# FF Draft Kit — War Room
+# FF Draft Kit
 
 A single-file, live fantasy football draft board for in-person drafts where some owners join remotely. Everyone opens the same URL on their own device (phone, laptop, or a TV in the room) and picks sync live across all of them via Firebase.
 
