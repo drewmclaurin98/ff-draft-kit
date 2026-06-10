@@ -177,6 +177,23 @@ textarea.players{min-height:150px;resize:vertical;line-height:1.5;font-size:13px
 .rcard .rh .cnt{margin-left:auto;font-size:11px;color:var(--muted);font-weight:700}
 .rcard .ritem{display:flex;align-items:center;gap:8px;padding:7px 11px;font-size:13px;border-bottom:1px solid var(--bg)}
 .rcard .ritem:last-child{border-bottom:none}
+.rneed{display:flex;flex-wrap:wrap;gap:4px;padding:8px 12px;border-top:1px solid var(--line)}
+/* history log */
+.history{overflow:auto;max-height:520px;padding:10px 14px;display:flex;flex-direction:column;gap:4px}
+#boardCard.expanded .history{flex:1;max-height:none;min-height:0}
+.hpick{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:9px;background:var(--surface2);font-size:13px}
+.hpick .hslot{font-weight:900;color:var(--muted);min-width:40px;font-size:12px;flex-shrink:0}
+.hpick .hname{font-weight:800;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hpick .hteam{font-weight:700;color:var(--muted);font-size:12px;flex-shrink:0}
+/* ADP badges */
+.adp-val{display:inline-block;font-size:9px;font-weight:900;letter-spacing:.05em;background:#0e3320;color:var(--turf);border:1px solid var(--turf-dim);border-radius:4px;padding:1px 4px;margin-top:3px}
+.adp-reach{display:inline-block;font-size:9px;font-weight:900;letter-spacing:.05em;background:#2a1418;color:#ff8094;border:1px solid #7a2230;border-radius:4px;padding:1px 4px;margin-top:3px}
+/* draft chat */
+.chat-panel{margin-top:16px}
+.chat-feed{height:180px;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:5px}
+.chat-msg{font-size:13px;line-height:1.4;word-break:break-word}
+.chat-msg .chat-who{font-weight:800;margin-right:5px}
+.chat-input-row{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--line)}
 .rcard .ritem .rn{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rcard .ritem .rr{margin-left:auto;font-size:10px;color:var(--muted2);font-weight:700}
 .rcard .none{padding:11px;color:var(--muted2);font-size:12px;font-style:italic}
@@ -406,11 +423,13 @@ textarea.players{min-height:150px;resize:vertical;line-height:1.5;font-size:13px
         <div class="tabs">
           <button class="tab on" data-view="board">Draft Board</button>
           <button class="tab" data-view="rosters">Rosters</button>
+          <button class="tab" data-view="history">History</button>
           <div class="spacer"></div>
           <button class="btn ghost mini" id="expandBoardBtn" title="Expand board" style="margin-bottom:6px"></button>
         </div>
         <div id="boardWrap" class="board-scroll"></div>
         <div id="rosterWrap" class="rosters hidden"></div>
+        <div id="historyWrap" class="history hidden"></div>
       </div>
     </div>
 
@@ -433,6 +452,20 @@ textarea.players{min-height:150px;resize:vertical;line-height:1.5;font-size:13px
         <span class="muted" style="font-size:12px;color:var(--muted)">Add players from the list with the <b>+Q</b> button</span>
       </div>
       <div class="qlist" id="queueList"></div>
+    </div>
+
+    <!-- draft chat -->
+    <div class="card chat-panel hidden" id="chatPanel">
+      <div class="qhead">
+        <span class="section-title" style="margin:0;font-size:17px">Draft Chat</span>
+        <span class="badge">Live</span>
+      </div>
+      <div class="chat-feed" id="chatFeed"></div>
+      <div class="chat-input-row">
+        <input class="input" id="chatNameInput" placeholder="Your name" style="width:110px;flex-shrink:0">
+        <input class="input" id="chatMsg" placeholder="Say something…" style="flex:1">
+        <button class="btn primary" id="chatSend">Send</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1180,6 +1213,7 @@ function renderDraft(){
   renderBoard();
   renderRosters();
   renderQueue();
+  renderHistory();
 }
 
 /* timer */
@@ -1246,10 +1280,14 @@ function renderBoard(){
       if(pick){
         const pl=playerById(pick.playerId);
         const kp = pick.keeper ? '<span class="kept">KEEPER</span>' : '';
+        const adp = (!pick.keeper && pl && pl.rank) ? (
+          pl.rank-(pick.overall+1)>=12 ? '<span class="adp-val">VALUE</span>' :
+          (pick.overall+1)-pl.rank>=12 ? '<span class="adp-reach">REACH</span>' : ''
+        ) : '';
         cell.className='bcell'+(pick.keeper?' keeper':'')+(via?' traded':'');
         cell.innerHTML=`<div class="bp">${esc(pl?pl.name:'?')}</div>
           <div class="bmeta"><span class="pos ${pl?pl.pos:'UNK'}">${pl?pl.pos:'?'}</span>
-          <span class="ov">${(r+1)}.${String(idx+1).padStart(2,'0')}</span></div>${kp}${via}`;
+          <span class="ov">${(r+1)}.${String(idx+1).padStart(2,'0')}</span></div>${adp}${kp}${via}`;
       } else if(keeperAt(overall)){
         const kk=keeperAt(overall), kpl=playerById(kk.playerId);
         cell.className='bcell keeper';
@@ -1281,6 +1319,26 @@ function scrollBoardToLastPick(){
   wrap.scrollTo({left:Math.max(0,target),behavior:'smooth'});
 }
 
+/* ---- history ---- */
+function renderHistory(){
+  const wrap=$('#historyWrap'); wrap.innerHTML='';
+  if(!state.picks.length){
+    wrap.innerHTML='<div style="color:var(--muted);padding:20px;text-align:center">No picks yet</div>';
+    return;
+  }
+  [...state.picks].reverse().forEach(pick=>{
+    const pl=playerById(pick.playerId);
+    const owner=state.config.teams.find(t=>t.id===pick.teamId);
+    const {idxInRound}=teamForPick(pick.overall);
+    const el=document.createElement('div'); el.className='hpick';
+    el.innerHTML=`<span class="hslot">${pick.round+1}.${String(idxInRound+1).padStart(2,'0')}</span>
+      <span class="pos ${pl?pl.pos:'UNK'}">${pl?pl.pos:'?'}</span>
+      <span class="hname">${esc(pl?pl.name:'?')}</span>
+      <span class="hteam">${esc(owner?owner.name:'?')}</span>`;
+    wrap.appendChild(el);
+  });
+}
+
 /* ---- rosters ---- */
 function renderRosters(){
   const wrap=$('#rosterWrap'); wrap.innerHTML='';
@@ -1300,6 +1358,11 @@ function renderRosters(){
       inner+=`<div class="ritem"><span class="pos ${pl?pl.pos:'UNK'}">${pl?pl.pos:'?'}</span>
         <span class="rn">${esc(pl?pl.name:'?')}</span>${pk.keeper?'<span class="ktag">K</span>':''}<span class="rr">${pl?(pl.team||''):''}</span></div>`;
     });
+    const posCounts={};
+    POSSET.forEach(p=>posCounts[p]=0);
+    items.forEach(pk=>{ const pl=playerById(pk.playerId); if(pl&&posCounts[pl.pos]!==undefined) posCounts[pl.pos]++; });
+    const needs=POSSET.map(p=>`<span class="pos ${p}" style="opacity:${posCounts[p]?1:0.25}">${p}&nbsp;${posCounts[p]}</span>`).join('');
+    inner+=`<div class="rneed">${needs}</div>`;
     card.innerHTML=inner; wrap.appendChild(card);
   });
 }
@@ -1468,6 +1531,7 @@ $$('.tab').forEach(t=>t.onclick=()=>{
   view=t.dataset.view;
   $('#boardWrap').classList.toggle('hidden',view!=='board');
   $('#rosterWrap').classList.toggle('hidden',view!=='rosters');
+  $('#historyWrap').classList.toggle('hidden',view!=='history');
 });
 
 /* =====================================================================
@@ -1542,6 +1606,39 @@ $('#expandBoardBtn').onclick=toggleBoardExpand;
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape'&&$('#boardCard').classList.contains('expanded')) toggleBoardExpand();
 });
+/* =====================================================================
+   DRAFT CHAT
+===================================================================== */
+const CHAT_KEY='ffdraft_chat_v1';
+let chatName=localStorage.getItem('chat_name')||'';
+$('#chatNameInput').value=chatName;
+$('#chatNameInput').oninput=()=>{ chatName=$('#chatNameInput').value; localStorage.setItem('chat_name',chatName); };
+function renderChat(msgs){
+  const feed=$('#chatFeed'); feed.innerHTML='';
+  msgs.forEach(m=>{
+    const d=document.createElement('div'); d.className='chat-msg';
+    d.innerHTML=`<span class="chat-who">${esc(m.name||'?')}:</span>${esc(m.text)}`;
+    feed.appendChild(d);
+  });
+  feed.scrollTop=feed.scrollHeight;
+}
+function sendChat(){
+  const name=($('#chatNameInput').value.trim())||'Anonymous';
+  const text=$('#chatMsg').value.trim();
+  if(!text||!db) return;
+  db.ref(CHAT_KEY).push({name,text,ts:Date.now()});
+  $('#chatMsg').value='';
+}
+$('#chatSend').onclick=sendChat;
+$('#chatMsg').addEventListener('keydown',e=>{ if(e.key==='Enter') sendChat(); });
+if(db){
+  $('#chatPanel').classList.remove('hidden');
+  db.ref(CHAT_KEY).limitToLast(60).on('value',snap=>{
+    const msgs=[]; snap.forEach(c=>msgs.push(c.val()));
+    renderChat(msgs);
+  });
+}
+
 $$('#mobileDraftTabs .mtab').forEach(btn=>{
   btn.onclick=()=>{
     $$('#mobileDraftTabs .mtab').forEach(b=>b.classList.remove('on'));
