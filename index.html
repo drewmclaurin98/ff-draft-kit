@@ -344,13 +344,14 @@ textarea.players{min-height:150px;resize:vertical;line-height:1.5;font-size:13px
       <div class="section-title"><span class="n">3</span> Player Pool</div>
       <div class="banner" style="margin-bottom:12px">
         <span>⚑</span>
-        <span>Pre-loaded with <b>current half-PPR consensus rankings</b> (pulled June 5, 2026). Teams reflect 2026 offseason moves — worth a quick sanity-check against your league platform's ADP. Paste your own list anytime (one per line: <code>Name, POS, TEAM</code>).</span>
+        <span>Click <b>Load from Sleeper</b> to pull the current active NFL player list straight from the Sleeper API (sorted by their ADP). Or paste your own list below (one per line: <code>Name, POS, TEAM</code>). Use <b>↺ Load starter list</b> to restore a static fallback.</span>
       </div>
       <div class="field">
         <label>Players — one per line (e.g. <code>Bijan Robinson, RB, ATL</code>)</label>
         <textarea class="input players" id="playerText"></textarea>
       </div>
       <div class="row" style="margin-top:10px;gap:10px">
+        <button class="btn primary" id="sleeperBtn" style="flex:0 0 auto">🏈 Load from Sleeper</button>
         <button class="btn ghost" id="loadDefaults" style="flex:0 0 auto">↺ Load starter list</button>
         <div class="spacer"></div>
         <span class="badge" id="poolCount">0 players</span>
@@ -523,8 +524,13 @@ const Store = {
       try{ const r = await window.storage.get(KEY, true); return r? r.value : null; }
       catch(e){ return null; }
     }
-    const snap = await db.ref(KEY).once('value');
-    return snap.val();
+    try{
+      const snap = await db.ref(KEY).once('value');
+      return snap.val();
+    }catch(e){
+      console.warn('Firebase read failed, falling back to localStorage:', e.message);
+      SYNC_OK=false; return localStorage.getItem(KEY)||null;
+    }
   },
   async set(v){
     if(!db){
@@ -533,7 +539,11 @@ const Store = {
       catch(e){ console.error(e); }
       return;
     }
-    await db.ref(KEY).set(v);
+    try{ await db.ref(KEY).set(v); }
+    catch(e){
+      console.warn('Firebase write failed, falling back to localStorage:', e.message);
+      SYNC_OK=false; localStorage.setItem(KEY, v);
+    }
   }
 };
 
@@ -1026,6 +1036,44 @@ async function applyImport(wb){
 function refreshPoolCount(){ $('#poolCount').textContent=parsePlayers($('#playerText').value).length+' players'; }
 $('#playerText').addEventListener('input',refreshPoolCount);
 $('#loadDefaults').onclick=()=>{ $('#playerText').value=DEFAULT_POOL; refreshPoolCount(); refreshKeeperControls(); };
+
+async function fetchSleeperPlayers(){
+  const btn=$('#sleeperBtn');
+  const orig=btn.textContent;
+  btn.disabled=true; btn.textContent='⌛ Loading…';
+  try{
+    const res=await fetch('https://api.sleeper.app/v1/players/nfl');
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data=await res.json();
+    const FANTASY_POS=new Set(['QB','RB','WR','TE','K','DEF']);
+    const players=Object.values(data)
+      .filter(p=>{
+        if(!p.active||!p.team) return false;
+        const fps=p.fantasy_positions||[];
+        return fps.some(fp=>FANTASY_POS.has(fp))||FANTASY_POS.has(p.position);
+      })
+      .map(p=>{
+        const pos=p.position==='DEF'?'DST':(p.position||'UNK');
+        const name=(p.full_name||[p.first_name,p.last_name].filter(Boolean).join(' ')).trim();
+        const team=(p.team||'').toUpperCase();
+        const rank=p.search_rank??999999;
+        return{name,pos,team,rank};
+      })
+      .filter(p=>p.name&&p.pos!=='UNK'&&p.team)
+      .sort((a,b)=>a.rank-b.rank);
+    if(!players.length){toast('No players found — try again');return;}
+    $('#playerText').value=players.map(p=>`${p.name}, ${p.pos}, ${p.team}`).join('\n');
+    refreshPoolCount(); refreshKeeperControls();
+    toast('Loaded '+players.length+' players from Sleeper',true);
+  }catch(e){
+    console.error(e);
+    toast('Failed to load from Sleeper — check your connection');
+  }finally{
+    btn.disabled=false; btn.textContent=orig;
+  }
+}
+$('#sleeperBtn').onclick=fetchSleeperPlayers;
+
 $('#playerText').value=DEFAULT_POOL; refreshPoolCount(); refreshKeeperControls();
 
 $('#startBtn').onclick=async()=>{
@@ -1130,6 +1178,10 @@ if(db){
         }
       }
     }catch(e){ setSync(false); }
+  }, err=>{
+    console.warn('Firebase listener error, falling back to localStorage:', err.message);
+    SYNC_OK=false; setSync(false);
+    setInterval(poll, 2500);
   });
 } else {
   setInterval(poll, 2500);
