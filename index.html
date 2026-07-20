@@ -114,10 +114,6 @@ textarea.players{min-height:150px;resize:vertical;line-height:1.5;font-size:13px
 .onclock .team{font-family:'Anton';font-size:clamp(24px,5vw,40px);line-height:1.05;margin-top:2px}
 .onclock .team.remote::after{content:"REMOTE";font-family:'Archivo';font-size:10px;font-weight:900;vertical-align:super;
   margin-left:8px;color:var(--wr);border:1px solid var(--wr);padding:2px 5px;border-radius:5px;letter-spacing:.1em}
-.timer{z-index:1;display:flex;flex-direction:column;align-items:center;gap:2px;min-width:84px}
-.timer .t{font-family:'Anton';font-size:34px;line-height:1;font-variant-numeric:tabular-nums}
-.timer.low .t{color:var(--clock)}
-.timer .lbl{font-size:10px;font-weight:800;color:var(--muted);letter-spacing:.14em;text-transform:uppercase}
 
 .main{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:start}
 .main>*{min-width:0}
@@ -244,7 +240,6 @@ textarea.players{min-height:150px;resize:vertical;line-height:1.5;font-size:13px
   .setup-grid{grid-template-columns:1fr}
   .main{grid-template-columns:1fr}
   .clockbar{grid-template-columns:1fr;text-align:center;gap:10px}
-  .timer{flex-direction:row;justify-content:center;gap:8px;align-items:baseline}
   .plist{max-height:48vh}
 }
 @media(max-width:600px){
@@ -269,7 +264,6 @@ textarea.players{min-height:150px;resize:vertical;line-height:1.5;font-size:13px
   .controls .btn{flex:1 1 120px}
   /* Clockbar */
   .clk-meta .pk{font-size:22px}
-  .timer .t{font-size:26px}
 }
 </style>
 
@@ -311,11 +305,6 @@ textarea.players{min-height:150px;resize:vertical;line-height:1.5;font-size:13px
           </div>
           <div class="field"><label>Rounds</label>
             <select id="numRounds"></select>
-          </div>
-          <div class="field"><label>Sec / pick</label>
-            <select id="secPick">
-              <option>60</option><option selected>90</option><option>120</option><option>180</option><option>0</option>
-            </select>
           </div>
         </div>
         <div class="field" style="margin-bottom:14px">
@@ -403,10 +392,6 @@ textarea.players{min-height:150px;resize:vertical;line-height:1.5;font-size:13px
       <div class="onclock">
         <div class="lbl" id="ocLbl">On the clock</div>
         <div class="team" id="ocTeam">—</div>
-      </div>
-      <div class="timer" id="timerBox">
-        <span class="t" id="timerT">90</span>
-        <span class="lbl">on clock</span>
       </div>
     </div>
 
@@ -1166,7 +1151,6 @@ $('#startBtn').onclick=async()=>{
       leagueName:$('#leagueName').value.trim()||'Fantasy Draft',
       teams, rounds:+$('#numRounds').value,
       snake,
-      secPerPick:+$('#secPick').value,
       tradedPicks, keepers
     },
     players, picks:[], queues:{},
@@ -1305,7 +1289,7 @@ function renderDraft(){
     $('#pkLabel').textContent=totalPicks()+' picks made';
     $('#ocTeam').textContent='🏆 All done';
     $('#ocTeam').className='team';
-    $('#timerBox').classList.add('hidden');
+
     $('#autopickBtn').disabled=true;
   } else {
     const ov=currentOverall();
@@ -1317,7 +1301,7 @@ function renderDraft(){
     $('#ocTeam').textContent=team.name;
     $('#ocTeam').className='team'+(team.remote?' remote':'');
     $('#ocLbl').textContent = team.id!==orig.id ? ('On the clock · via '+orig.name+"'s pick") : 'On the clock';
-    $('#timerBox').classList.toggle('hidden', cfg.secPerPick===0);
+
     $('#autopickBtn').disabled=false;
   }
   $('#undoBtn').disabled=!state.picks.some(p=>!p.keeper);
@@ -1328,14 +1312,6 @@ function renderDraft(){
   renderHistory();
 }
 
-/* timer */
-setInterval(()=>{
-  if(!state||state.status!=='drafting'||isDone()||state.config.secPerPick===0) return;
-  const elapsed=Math.floor((Date.now()-(state.pickStartedAt||Date.now()))/1000);
-  const rem=Math.max(0,state.config.secPerPick-elapsed);
-  $('#timerT').textContent=rem;
-  $('#timerBox').classList.toggle('low',rem<=15);
-},300);
 
 /* ---- available players list ---- */
 function renderPool(){
