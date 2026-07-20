@@ -1079,7 +1079,7 @@ function refreshPoolCount(){ $('#poolCount').textContent=parsePlayers($('#player
 $('#playerText').addEventListener('input',refreshPoolCount);
 $('#loadDefaults').onclick=()=>{ $('#playerText').value=DEFAULT_POOL; refreshPoolCount(); refreshKeeperControls(); };
 
-async function fetchSleeperPlayers(){
+async function fetchSleeperPlayers(auto=false){
   const btn=$('#sleeperBtn');
   const orig=btn.textContent;
   btn.disabled=true; btn.textContent='⌛ Loading…';
@@ -1112,14 +1112,20 @@ async function fetchSleeperPlayers(){
     toast('Loaded '+players.length+' players from Sleeper',true);
   }catch(e){
     console.error(e);
-    toast('Failed to load from Sleeper — check your connection');
+    if(auto){
+      toast('Sleeper unavailable — using starter list as fallback');
+    } else {
+      toast('Failed to load from Sleeper — check your connection');
+    }
   }finally{
     btn.disabled=false; btn.textContent=orig;
   }
 }
 $('#sleeperBtn').onclick=fetchSleeperPlayers;
 
+// pre-fill starter list immediately, then replace with live Sleeper data
 $('#playerText').value=DEFAULT_POOL; refreshPoolCount(); refreshKeeperControls();
+fetchSleeperPlayers(true);
 
 $('#startBtn').onclick=async()=>{
   const teams=[...$('#teamRows').querySelectorAll('.team-row')].map((r,i)=>({
