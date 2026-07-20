@@ -131,7 +131,7 @@ textarea.players{min-height:150px;resize:vertical;line-height:1.5;font-size:13px
 .fbtn{padding:6px 11px;border-radius:8px;font-size:12px;font-weight:800;border:1px solid var(--line);background:var(--bg2);color:var(--muted)}
 .fbtn.on{color:var(--chalk);border-color:var(--turf);background:#0d1d14}
 .plist{max-height:64vh;overflow:auto;padding:0 8px 10px}
-.prow{display:flex;align-items:center;gap:11px;padding:9px 10px;border-radius:11px;border:1px solid transparent;transition:background .12s}
+.prow{display:flex;align-items:center;gap:11px;padding:9px 10px;border-radius:11px;border:1px solid transparent;transition:background .12s;cursor:pointer}
 .prow:hover{background:var(--surface2);border-color:var(--line)}
 .prow .rank{font-weight:800;color:var(--muted2);font-size:12px;min-width:26px;text-align:right}
 .prow .nm{flex:1;min-width:0}
@@ -188,6 +188,15 @@ textarea.players{min-height:150px;resize:vertical;line-height:1.5;font-size:13px
 /* ADP badges */
 .adp-val{display:inline-block;font-size:9px;font-weight:900;letter-spacing:.05em;background:#0e3320;color:var(--turf);border:1px solid var(--turf-dim);border-radius:4px;padding:1px 4px;margin-top:3px}
 .adp-reach{display:inline-block;font-size:9px;font-weight:900;letter-spacing:.05em;background:#2a1418;color:#ff8094;border:1px solid #7a2230;border-radius:4px;padding:1px 4px;margin-top:3px}
+/* injury badges */
+.inj-badge{display:inline-block;font-size:9px;font-weight:900;letter-spacing:.06em;padding:1px 5px;border-radius:4px;vertical-align:middle}
+.inj-badge.q{background:#3a2800;color:#ffc233;border:1px solid #7a5800}
+.inj-badge.d{background:#2a1a00;color:#ff9f1c;border:1px solid #7a4500}
+.inj-badge.out{background:#2a1418;color:#ff8094;border:1px solid #7a2230}
+/* player info modal */
+.pm-stat{background:var(--bg2);border:1px solid var(--line);border-radius:9px;padding:9px 11px}
+.pm-stat .lbl{display:block;font-size:10px;font-weight:800;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
+.pm-stat .val{display:block;font-size:15px;font-weight:800;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* draft chat */
 .chat-panel{margin-top:16px}
 .chat-feed{height:180px;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:5px}
@@ -471,6 +480,34 @@ textarea.players{min-height:150px;resize:vertical;line-height:1.5;font-size:13px
   </div>
 </div>
 
+<!-- =================== PLAYER INFO MODAL =================== -->
+<div class="modal-bg" id="playerModalBg">
+  <div class="card modal" style="max-width:500px">
+    <div style="display:flex;gap:14px;align-items:flex-start;margin-bottom:14px">
+      <div style="flex-shrink:0;width:80px;height:80px;border-radius:10px;overflow:hidden;background:var(--surface2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-family:'Anton';font-size:22px;color:var(--muted2)" id="pmImgWrap">
+        <img id="pmImg" src="" alt="" style="width:100%;height:100%;object-fit:cover;display:none">
+        <span id="pmImgFb">?</span>
+      </div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:5px">
+          <span class="pos" id="pmPos">QB</span>
+          <span id="pmInj"></span>
+        </div>
+        <div style="font-family:'Anton';font-size:22px;line-height:1.1" id="pmName">—</div>
+        <div style="color:var(--muted);font-size:13px;font-weight:600;margin-top:3px" id="pmMeta">—</div>
+      </div>
+      <button class="btn ghost" id="pmClose" style="flex-shrink:0;padding:7px 10px">✕</button>
+    </div>
+    <div id="pmStats" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px"></div>
+    <div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;align-items:center">
+      <a id="pmEspn" href="#" target="_blank" rel="noopener" class="btn ghost" style="text-decoration:none;display:none">↗ ESPN</a>
+      <div class="spacer"></div>
+      <button class="btn ghost" id="pmQ">+Q Queue</button>
+      <button class="btn primary" id="pmDraft">Draft</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="modalBg">
   <div class="card modal">
     <h3 id="modalTitle">Are you sure?</h3>
@@ -715,12 +752,13 @@ function parsePlayers(text){
   const out=[]; let i=0;
   text.split(/\n+/).forEach(line=>{
     line=line.trim(); if(!line) return;
-    let name=line, pos='UNK', team='';
+    let name=line, pos='UNK', team='', sleeperId='';
     if(line.includes(',')){
       const parts=line.split(',').map(s=>s.trim());
       name=parts[0];
       if(parts[1]) pos=normPos(parts[1]);
       if(parts[2]) team=parts[2].toUpperCase();
+      if(parts[3]) sleeperId=parts[3];
     } else {
       const toks=line.split(/\s+/);
       const maybeTeam=toks[toks.length-1];
@@ -731,7 +769,7 @@ function parsePlayers(text){
         pos=normPos(maybeTeam); name=toks.slice(0,-1).join(' ');
       }
     }
-    out.push({id:'p'+(i++), name, pos, team, rank:out.length+1});
+    out.push({id:'p'+(i++), name, pos, team, rank:out.length+1, sleeperId});
   });
   return out;
 }
@@ -741,6 +779,25 @@ let state=null;        // canonical draft state (mirrors shared storage)
 let localVersion=-1;   // last version we rendered
 let view='board';
 let queueTeamSel=null;
+let sleeperCache={};   // sleeper player_id → full sleeper player object
+let sleeperCacheReady=false, sleeperCachePending=null;
+async function ensureSleeperCache(){
+  if(sleeperCacheReady||Object.keys(sleeperCache).length>0) return;
+  if(sleeperCachePending) return sleeperCachePending;
+  sleeperCachePending=(async()=>{
+    try{
+      const res=await fetch('https://api.sleeper.app/v1/players/nfl');
+      if(res.ok){
+        const data=await res.json();
+        sleeperCache={};
+        Object.values(data).forEach(p=>{ if(p.player_id) sleeperCache[p.player_id]=p; });
+        sleeperCacheReady=true;
+      }
+    }catch(e){ console.warn('Could not fetch Sleeper cache:',e); }
+    sleeperCachePending=null;
+  })();
+  return sleeperCachePending;
+}
 let muteSync=false;    // suppress polling re-render while we're mid-write
 
 function freshTeams(n){
@@ -1046,6 +1103,9 @@ async function fetchSleeperPlayers(){
     if(!res.ok) throw new Error('HTTP '+res.status);
     const data=await res.json();
     const FANTASY_POS=new Set(['QB','RB','WR','TE','K','DEF']);
+    // populate cache for modal lookups
+    sleeperCache={};
+    Object.values(data).forEach(p=>{ if(p.player_id) sleeperCache[p.player_id]=p; });
     const players=Object.values(data)
       .filter(p=>{
         if(!p.active||!p.team) return false;
@@ -1057,12 +1117,12 @@ async function fetchSleeperPlayers(){
         const name=(p.full_name||[p.first_name,p.last_name].filter(Boolean).join(' ')).trim();
         const team=(p.team||'').toUpperCase();
         const rank=p.search_rank??999999;
-        return{name,pos,team,rank};
+        return{name,pos,team,rank,player_id:p.player_id||''};
       })
       .filter(p=>p.name&&p.pos!=='UNK'&&p.team)
       .sort((a,b)=>a.rank-b.rank);
     if(!players.length){toast('No players found — try again');return;}
-    $('#playerText').value=players.map(p=>`${p.name}, ${p.pos}, ${p.team}`).join('\n');
+    $('#playerText').value=players.map(p=>`${p.name}, ${p.pos}, ${p.team}, ${p.player_id}`).join('\n');
     refreshPoolCount(); refreshKeeperControls();
     toast('Loaded '+players.length+' players from Sleeper',true);
   }catch(e){
@@ -1289,20 +1349,116 @@ function renderPool(){
     .filter(p=>!q||p.name.toLowerCase().includes(q));
   if(!avail.length){ list.innerHTML='<div class="empty-note">No available players match.</div>'; return; }
   avail.slice(0,300).forEach((p,i)=>{
+    const cached=p.sleeperId?sleeperCache[p.sleeperId]:null;
+    const inj=cached?cached.injury_status:null;
+    const injHtml=inj?` <span class="inj-badge ${injSeverity(inj)}">${injAbbr(inj)}</span>`:'';
     const row=document.createElement('div'); row.className='prow';
     row.innerHTML=`<span class="rank">${p.rank||''}</span>
       <span class="pos ${p.pos}">${p.pos}</span>
-      <span class="nm"><div class="pn">${esc(p.name)}</div><div class="pt">${p.team||''}</div></span>
+      <span class="nm"><div class="pn">${esc(p.name)}</div><div class="pt">${esc(p.team||'')}${injHtml}</div></span>
       <span class="acts">
         <button class="mini qbtn" title="Add to queue">+Q</button>
         <button class="mini btn primary" title="Draft">Draft</button>
       </span>`;
+    row.onclick=e=>{ if(e.target.closest('button')) return; openPlayerModal(p); };
     row.querySelector('.btn.primary').onclick=()=>draftPlayer(p.id);
     row.querySelector('.qbtn').onclick=()=>addToQueue(p.id);
     list.appendChild(row);
   });
 }
 $('#poolSearch').addEventListener('input',renderPool);
+
+/* ---- injury helpers ---- */
+function injAbbr(s){
+  if(!s) return '';
+  const l=s.toLowerCase();
+  if(l==='questionable') return 'Q';
+  if(l==='doubtful') return 'D';
+  if(l==='out') return 'OUT';
+  if(l.includes('injured')||l==='ir') return 'IR';
+  if(l==='pup') return 'PUP';
+  if(l==='dnp') return 'DNP';
+  return s.slice(0,3).toUpperCase();
+}
+function injSeverity(s){
+  if(!s) return 'out';
+  const l=s.toLowerCase();
+  if(l==='questionable') return 'q';
+  if(l==='doubtful') return 'd';
+  return 'out';
+}
+
+/* ---- player info modal ---- */
+async function openPlayerModal(p){
+  if(p.sleeperId && !sleeperCacheReady && Object.keys(sleeperCache).length===0){
+    // show modal immediately with what we have, then fill in stats once cache loads
+    $('#pmStats').innerHTML='<div style="color:var(--muted);font-size:12px;grid-column:1/-1">Loading player data…</div>';
+    $('#playerModalBg').classList.add('show');
+    await ensureSleeperCache();
+  }
+  const cached=p.sleeperId?sleeperCache[p.sleeperId]:null;
+  const taken=takenIds().has(p.id);
+
+  // image
+  const img=$('#pmImg'), fb=$('#pmImgFb');
+  const showImg=src=>{
+    img.onload=()=>{ img.style.display='block'; fb.style.display='none'; };
+    img.onerror=()=>{ img.style.display='none'; fb.style.display='block'; fb.textContent=p.pos[0]||'?'; };
+    img.src=src;
+  };
+  img.style.display='none'; fb.style.display='block'; fb.textContent=p.pos[0]||'?';
+  if(p.sleeperId && p.pos!=='DST'){
+    showImg(`https://sleepercdn.com/content/nfl/players/thumb/${p.sleeperId}.jpg`);
+  } else if(p.pos==='DST' && p.team){
+    showImg(`https://sleepercdn.com/images/team_logos/nfl/${p.team.toLowerCase()}.jpg`);
+  }
+
+  // header
+  const posEl=$('#pmPos'); posEl.className='pos '+p.pos; posEl.textContent=p.pos;
+  $('#pmName').textContent=p.name;
+
+  const inj=cached?cached.injury_status:null;
+  $('#pmInj').innerHTML=inj?`<span class="inj-badge ${injSeverity(inj)}">${injAbbr(inj)}</span>`:'';
+
+  const meta=[p.team];
+  if(cached){
+    if(cached.age) meta.push(cached.age+' yrs');
+    if(cached.years_exp===0) meta.push('Rookie');
+    else if(cached.years_exp) meta.push(cached.years_exp+'y exp');
+  }
+  $('#pmMeta').textContent=meta.filter(Boolean).join(' · ');
+
+  // stats grid
+  const stats=[];
+  if(p.rank&&p.rank<999990) stats.push({l:'ADP Rank',v:'#'+p.rank});
+  if(cached){
+    if(inj||cached.status) stats.push({l:'Status',v:inj||cached.status});
+    if(cached.age) stats.push({l:'Age',v:cached.age});
+    if(cached.years_exp!=null) stats.push({l:'Experience',v:cached.years_exp===0?'Rookie':cached.years_exp+'y'});
+    if(cached.height) stats.push({l:'Height',v:cached.height});
+    if(cached.weight) stats.push({l:'Weight',v:cached.weight+' lbs'});
+    if(cached.college&&cached.college!=='None'&&cached.college!==null) stats.push({l:'College',v:cached.college});
+    if(cached.depth_chart_order) stats.push({l:'Depth Chart',v:'#'+cached.depth_chart_order+' '+p.pos});
+  }
+  $('#pmStats').innerHTML=stats.map(s=>`<div class="pm-stat"><span class="lbl">${esc(s.l)}</span><span class="val">${esc(String(s.v))}</span></div>`).join('');
+
+  // ESPN link
+  const espnLink=$('#pmEspn');
+  const espnId=cached?cached.espn_id:null;
+  if(espnId){ espnLink.href=`https://www.espn.com/nfl/player/_/id/${espnId}`; espnLink.style.display=''; }
+  else espnLink.style.display='none';
+
+  // action buttons
+  const draftBtn=$('#pmDraft'), qBtn=$('#pmQ');
+  draftBtn.disabled=taken; qBtn.disabled=taken;
+  draftBtn.textContent=taken?'Drafted':'Draft';
+  draftBtn.onclick=()=>{ $('#playerModalBg').classList.remove('show'); draftPlayer(p.id); };
+  qBtn.onclick=()=>addToQueue(p.id);
+
+  $('#playerModalBg').classList.add('show');
+}
+$('#pmClose').onclick=()=>$('#playerModalBg').classList.remove('show');
+$('#playerModalBg').onclick=e=>{ if(e.target===$('#playerModalBg')) $('#playerModalBg').classList.remove('show'); };
 
 /* ---- draft board grid ---- */
 function renderBoard(){
