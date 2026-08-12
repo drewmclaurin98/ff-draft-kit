@@ -1008,9 +1008,10 @@ async function applyImport(wb){
   const stateSheetName=wb.SheetNames.find(n=>n==='Draft State');
   if(stateSheetName){
     const rows=XLSX.utils.sheet_to_json(wb.Sheets[stateSheetName],{header:1,blankrows:false});
-    if(rows.length>=2 && rows[1][0]){
+    const stateJson=rows.slice(1).map(r=>r[0]||'').join('');
+    if(stateJson){
       try{
-        const s=JSON.parse(String(rows[1][0]));
+        const s=JSON.parse(stateJson);
         if(s && s.status && s.config && s.players && Array.isArray(s.picks)){
           state=s; localVersion=s.version;
           await commit();
@@ -1694,9 +1695,15 @@ function exportXlsx(){
   ws2['!cols']=cfg.teams.map(()=>({wch:26}));
 
   // Sheet 3 — Draft State (full JSON snapshot; import this file to resume the draft)
+  // Excel caps cell text at 32767 chars, and a full player pool blows past that —
+  // so the JSON is split across rows and rejoined on import.
+  const stateJson=JSON.stringify(state);
+  const CHUNK=30000;
+  const chunks=[];
+  for(let i=0;i<stateJson.length;i+=CHUNK) chunks.push(stateJson.slice(i,i+CHUNK));
   const wsState=XLSX.utils.aoa_to_sheet([
-    ['Draft State JSON — do not edit this sheet'],
-    [JSON.stringify(state)]
+    ['Draft State JSON — do not edit this sheet (may span multiple rows)'],
+    ...chunks.map(c=>[c])
   ]);
 
   const wb=XLSX.utils.book_new();
