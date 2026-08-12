@@ -784,6 +784,7 @@ async function ensureSleeperCache(){
   return sleeperCachePending;
 }
 let muteSync=false;    // suppress polling re-render while we're mid-write
+let knownPickCount=null; // last picks.length we've already announced, for popup-on-sync
 
 function freshTeams(n){
   const out=[];
@@ -1199,7 +1200,7 @@ async function poll(){
     if(incoming.version!==localVersion){
       state=incoming; localVersion=incoming.version;
       if(state.status==='drafting'||state.status==='done'){
-        if($('#setupView').classList.contains('hidden')) renderDraft();
+        if($('#setupView').classList.contains('hidden')){ announceNewPicks(); renderDraft(); }
         else enterDraft();
       }
     }
@@ -1223,7 +1224,7 @@ if(db){
       if(incoming.version!==localVersion){
         state=incoming; localVersion=incoming.version;
         if(state.status==='drafting'||state.status==='done'){
-          if($('#setupView').classList.contains('hidden')) renderDraft();
+          if($('#setupView').classList.contains('hidden')){ announceNewPicks(); renderDraft(); }
           else enterDraft();
         }
       }
@@ -1244,6 +1245,7 @@ function enterDraft(){
   $('#setupView').classList.add('hidden');
   $('#waitingView').classList.add('hidden');
   $('#draftView').classList.remove('hidden');
+  knownPickCount=state.picks.length;
   buildPoolFilters();
   buildQueueTeamSelect();
   renderDraft();
@@ -1615,7 +1617,8 @@ async function draftPlayer(pid){
   Object.keys(state.queues).forEach(tid=>{ state.queues[tid]=state.queues[tid].filter(x=>x!==pid); });
   await commit();
   const pl=playerById(pid);
-  toast(team.name+' select '+pl.name, true);
+  knownPickCount=state.picks.length;
+  announcePick(team,pl);
   renderDraft();
 }
 async function autopick(){
@@ -1729,9 +1732,29 @@ $$('.tab').forEach(t=>t.onclick=()=>{
 ===================================================================== */
 function esc(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 let toastTimer;
-function toast(msg,win){
+function toast(msg,win,ms){
   const t=$('#toast'); t.textContent=msg; t.className='toast show'+(win?' win':'');
-  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.className='toast',2200);
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.className='toast',ms||2200);
+}
+/* pick popup — shown to the drafter AND to every other synced client */
+function announcePick(team,pl){
+  const posTag=(pl.pos&&pl.pos!=='UNK')?' ('+pl.pos+(pl.team?' · '+pl.team:'')+')':'';
+  toast('🏈 '+team.name+' selects '+pl.name+posTag, true, 3200);
+}
+/* compares the freshly-synced state against the last pick count we announced,
+   and pops the toast for anyone who wasn't the one who made the pick */
+function announceNewPicks(){
+  if(!state||!state.picks){ return; }
+  if(knownPickCount===null){ knownPickCount=state.picks.length; return; }
+  if(state.picks.length>knownPickCount){
+    const fresh=state.picks.slice(knownPickCount).filter(p=>!p.keeper);
+    if(fresh.length){
+      const pick=fresh[fresh.length-1];
+      const pl=playerById(pick.playerId), team=teamById(pick.teamId);
+      if(pl&&team) announcePick(team,pl);
+    }
+  }
+  knownPickCount=state.picks.length;
 }
 let modalAction=null;
 function confirmModal(title,body,action){
