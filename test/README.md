@@ -17,6 +17,22 @@ npm install --no-save playwright
 Chromium is found automatically at `/opt/pw-browsers/...`, `/usr/bin/chromium`,
 or wherever `CHROME_PATH` points. Nothing is downloaded.
 
+### Windows (PowerShell)
+
+The harness only auto-finds Chrome at Linux paths, so on Windows you must point
+`CHROME_PATH` at your installed Chrome yourself. It lasts only for the current
+terminal session — re-run it in a new window.
+
+```powershell
+npm install --no-save playwright
+$env:CHROME_PATH = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+
+node test/functional.mjs
+node test/functional.mjs --teams 12 --rounds 15 --pool 200   # one custom run instead
+
+node test/loadtest.mjs --teams 10 --rounds 15 --pool 300
+```
+
 ## Load test
 
 Measures what a draft actually costs each phone in the room.
@@ -33,12 +49,18 @@ percentiles, and whether two simultaneous picks both survive.
 
 ## Functional test
 
-Regression checks for keepers, traded picks, undo, autopick queues, cross-device
-agreement, export/resume, write races, and the VALUE/REACH badge direction.
+Regression checks for snake draft order, keepers, traded picks, undo, autopick
+queues, cross-device agreement, export/resume, write races, and the VALUE/REACH
+badge direction.
+
+The whole suite runs twice — a 4-team baseline and a 10-team draft (the app's
+default league size) — with the keeper and traded-pick slots recomputed from the
+team count, so the 10-team pass genuinely exercises the draft-order math.
 
 ```bash
 node test/functional.mjs
 node test/functional.mjs --file /path/to/other.html
+node test/functional.mjs --teams 12 --rounds 15 --pool 200   # one custom run instead
 ```
 
 Exits non-zero on failure, so it drops straight into CI if you ever want it there.
