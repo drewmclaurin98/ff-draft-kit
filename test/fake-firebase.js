@@ -165,6 +165,20 @@
       };
     }
 
+    /* Minimal stand-in for firebase.auth(). index.html calls
+       signInAnonymously() on startup and gates every DB call on it resolving;
+       the harness has no real auth, so hand back a token immediately. */
+    const fakeAuth = {
+      currentUser: { uid: 'fake-anon-uid', isAnonymous: true },
+      signInAnonymously() {
+        return Promise.resolve({ user: fakeAuth.currentUser });
+      },
+      onAuthStateChanged(cb) {
+        setTimeout(() => cb(fakeAuth.currentUser), 0);
+        return () => {};
+      },
+    };
+
     return {
       stats,
       reset() {
@@ -178,6 +192,7 @@
       sdk: {
         initializeApp() { return {}; },
         database() { return { ref }; },
+        auth() { return fakeAuth; },
       },
     };
   }

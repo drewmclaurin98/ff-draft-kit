@@ -10,6 +10,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <style>
 :root{
   --bg:#0a0e0c; --bg2:#0f1512; --surface:#141d18; --surface2:#1b2720;
@@ -525,9 +526,28 @@ const FIREBASE_CONFIG = {
 };
 
 let db = null;
+let SYNC_OK = true;
+/* Resolves once anonymous auth has produced a token — or immediately when
+   Firebase isn't configured. Every Firebase read, write and listener awaits
+   this, so nothing touches the database before we hold a token (the security
+   rules require auth != null). If sign-in fails or stalls, we drop `db` and
+   the storage layer transparently falls back to local-only mode — same code
+   path, and the status indicator flips to "Local only". No login UI ever. */
+let authReady = Promise.resolve();
 if (FIREBASE_CONFIG.databaseURL) {
   firebase.initializeApp(FIREBASE_CONFIG);
   db = firebase.database();
+  authReady = Promise.race([
+    firebase.auth().signInAnonymously(),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('auth timed out')), 8000)),
+  ]).then(
+    () => {},
+    (e) => {
+      console.warn('Anonymous sign-in failed — running local-only:', e && e.message);
+      db = null;
+      SYNC_OK = false;
+    }
+  );
 }
 
 /* Commissioner PIN */
@@ -542,9 +562,9 @@ const KEY = 'ffdraft:state:v1';
    so it is written once and read once per device instead of riding along with
    every pick. This is what keeps per-pick traffic small. */
 const POOL_KEY = 'ffdraft:pool:v1';
-let SYNC_OK = true;
 const Store = {
   async get(key=KEY){
+    await authReady;
     if(!db){
       if(!window.storage){ SYNC_OK=false; return localStorage.getItem(key)||null; }
       try{ const r = await window.storage.get(key, true); return r? r.value : null; }
@@ -559,6 +579,7 @@ const Store = {
     }
   },
   async set(v, key=KEY){
+    await authReady;
     if(!db){
       if(!window.storage){ SYNC_OK=false; localStorage.setItem(key, v); return; }
       try{ await window.storage.set(key, v, true); }
@@ -1259,6 +1280,7 @@ function withState(s, fn){
    Return false from mutate() to abort the write (e.g. the player was just
    taken by someone else). Resolves to true if the change was committed. */
 async function applyAtomic(mutate){
+  await authReady;
   // Local-only mode: no other writers, so no transaction needed.
   if(!db || !SYNC_OK){
     let ok;
@@ -1343,22 +1365,26 @@ function setSync(ok){
   if(ok){ dot.className='dot'; txt.textContent='Live · synced'; }
   else { dot.className='dot warn'; txt.textContent='Reconnecting…'; }
 }
-if(db){
-  db.ref(KEY).on('value', async snap=>{
-    setSync(true);
-    const raw=snap.val();
-    if(!raw) return;
-    try{
-      await adoptIncoming(raw);
-    }catch(e){ setSync(false); }
-  }, err=>{
-    console.warn('Firebase listener error, falling back to localStorage:', err.message);
-    SYNC_OK=false; setSync(false);
+/* Attach the live listener only after auth resolves — a token must exist
+   before the first read, and if sign-in failed `db` is already null here. */
+authReady.then(()=>{
+  if(db){
+    db.ref(KEY).on('value', async snap=>{
+      setSync(true);
+      const raw=snap.val();
+      if(!raw) return;
+      try{
+        await adoptIncoming(raw);
+      }catch(e){ setSync(false); }
+    }, err=>{
+      console.warn('Firebase listener error, falling back to localStorage:', err.message);
+      SYNC_OK=false; setSync(false);
+      setInterval(poll, 2500);
+    });
+  } else {
     setInterval(poll, 2500);
-  });
-} else {
-  setInterval(poll, 2500);
-}
+  }
+});
 
 /* =====================================================================
    DRAFT VIEW
@@ -2025,13 +2051,14 @@ function sendChat(){
 }
 $('#chatSend').onclick=sendChat;
 $('#chatMsg').addEventListener('keydown',e=>{ if(e.key==='Enter') sendChat(); });
-if(db){
+authReady.then(()=>{
+  if(!db) return;
   $('#chatPanel').classList.remove('hidden');
   db.ref(CHAT_KEY).limitToLast(60).on('value',snap=>{
     const msgs=[]; snap.forEach(c=>msgs.push(c.val()));
     renderChat(msgs);
   });
-}
+});
 
 $$('#mobileDraftTabs .mtab').forEach(btn=>{
   btn.onclick=()=>{
@@ -2045,6 +2072,7 @@ $$('#mobileDraftTabs .mtab').forEach(btn=>{
    BOOT — auto-resume if a draft already exists in shared storage
 ===================================================================== */
 (async function boot(){
+  await authReady;
   const raw=await Store.get();
   if(raw){
     try{

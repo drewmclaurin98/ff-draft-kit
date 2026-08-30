@@ -1,0 +1,20 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "ffdraft:state:v1": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      ".validate": "newData.isString() && newData.val().length < 500000"
+    },
+    "ffdraft:pool:v1": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      ".validate": "newData.isString() && newData.val().length < 500000"
+    },
+    "ffdraft_chat_v1": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    }
+  }
+}

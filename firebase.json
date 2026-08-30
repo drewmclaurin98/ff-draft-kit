@@ -5,7 +5,27 @@
       "firebase.json",
       "**/.*",
       "**/node_modules/**",
-      "test/**"
+      ".git/**",
+      ".github/**",
+      ".claude/**",
+      ".firebase/**",
+      "test/**",
+      "README.md",
+      "database.rules.json"
+    ],
+    "headers": [
+      {
+        "source": "/",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+        ]
+      },
+      {
+        "source": "**/*.html",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+        ]
+      }
     ]
   }
 }
