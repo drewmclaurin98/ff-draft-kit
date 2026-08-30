@@ -14,6 +14,7 @@
        one clear rejection, no duplicate roster entry
      · two devices picking different players at the same instant -> both land
      · the export snapshot still carries the pool, so resume works
+     · VALUE / REACH badges point the right way round
 
    Usage: node test/functional.mjs [--file path/to/index.html]
 ===================================================================== */
@@ -270,6 +271,57 @@ if (poolSplit) {
     check('  picks still sync and both devices keep a full pool', bothSee.every(Boolean));
   } finally {
     await M.close();
+  }
+}
+
+/* =====================================================================
+   VALUE / REACH badges on the draft board.
+
+   The pool is seeded so player pN has rank N+1. A player taken well AFTER
+   their rank is value; one taken well BEFORE it is a reach. These were
+   inverted once, so pin the direction.
+===================================================================== */
+{
+  console.log('\n  draft board VALUE/REACH badges:');
+  const B = await startHarness({
+    target: TARGET,
+    devices: 1,
+    seedState: JSON.stringify(poolSplit ? state : { ...state, players }),
+    seedPool: poolSplit ? JSON.stringify(players) : null,
+    latency: 15,
+  });
+  try {
+    await waitForBoot(B.frames, POOL);
+    const f = B.frames[0];
+
+    // Pick 1 takes p40 (rank 41) -> 40 slots ahead of its rank -> REACH.
+    // Picks 2..14 burn other late-ranked players so p0 survives...
+    const order = ['p40'];
+    for (let i = 41; i <= 53; i++) order.push('p' + i);
+    order.push('p0');            // ...to pick 15 (rank 1, 14 picks late) -> VALUE
+
+    for (const pid of order) {
+      const n = await f.evaluate(() => state.picks.length);
+      await f.evaluate((id) => draftPlayer(id), pid);
+      await waitForPicks(B.frames, n + 1);
+    }
+
+    const badges = await f.evaluate(() => {
+      const cells = [...document.querySelectorAll('.bcell')];
+      const at = (name) => {
+        const c = cells.find((x) => x.querySelector('.bp') && x.querySelector('.bp').textContent === name);
+        if (!c) return 'missing';
+        if (c.querySelector('.adp-val')) return 'VALUE';
+        if (c.querySelector('.adp-reach')) return 'REACH';
+        return 'none';
+      };
+      return { early: at('Player 40 Testcase'), late: at('Player 0 Testcase') };
+    });
+
+    check('  rank 41 taken at pick 1 shows REACH', badges.early === 'REACH', `got ${badges.early}`);
+    check('  rank 1 taken at pick 15 shows VALUE', badges.late === 'VALUE', `got ${badges.late}`);
+  } finally {
+    await B.close();
   }
 }
 

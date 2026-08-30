@@ -1594,9 +1594,12 @@ function renderBoard(){
       if(pick){
         const pl=playerById(pick.playerId);
         const kp = pick.keeper ? '<span class="kept">KEEPER</span>' : '';
+        // pl.rank is where the player sits in the pool ordering; pick.overall+1
+        // is the pick they actually went at. Falling PAST your rank is value;
+        // going ahead of it is a reach.
         const adp = (!pick.keeper && pl && pl.rank) ? (
-          pl.rank-(pick.overall+1)>=12 ? '<span class="adp-val">VALUE</span>' :
-          (pick.overall+1)-pl.rank>=12 ? '<span class="adp-reach">REACH</span>' : ''
+          (pick.overall+1)-pl.rank>=12 ? '<span class="adp-val">VALUE</span>' :
+          pl.rank-(pick.overall+1)>=12 ? '<span class="adp-reach">REACH</span>' : ''
         ) : '';
         cell.className='bcell'+(pick.keeper?' keeper':'')+(via?' traded':'');
         cell.innerHTML=`<div class="bp">${esc(pl?pl.name:'?')}</div>

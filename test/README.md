@@ -34,7 +34,7 @@ percentiles, and whether two simultaneous picks both survive.
 ## Functional test
 
 Regression checks for keepers, traded picks, undo, autopick queues, cross-device
-agreement, export/resume, and write races.
+agreement, export/resume, write races, and the VALUE/REACH badge direction.
 
 ```bash
 node test/functional.mjs
