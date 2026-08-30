@@ -538,36 +538,84 @@ let isCommissioner = sessionStorage.getItem('comm_pin') === COMMISSIONER_PIN;
    STORAGE LAYER — uses Firebase when configured, localStorage otherwise.
 ===================================================================== */
 const KEY = 'ffdraft:state:v1';
+/* The player pool lives on its own key. It never changes once the draft starts,
+   so it is written once and read once per device instead of riding along with
+   every pick. This is what keeps per-pick traffic small. */
+const POOL_KEY = 'ffdraft:pool:v1';
 let SYNC_OK = true;
 const Store = {
-  async get(){
+  async get(key=KEY){
     if(!db){
-      if(!window.storage){ SYNC_OK=false; return localStorage.getItem(KEY)||null; }
-      try{ const r = await window.storage.get(KEY, true); return r? r.value : null; }
+      if(!window.storage){ SYNC_OK=false; return localStorage.getItem(key)||null; }
+      try{ const r = await window.storage.get(key, true); return r? r.value : null; }
       catch(e){ return null; }
     }
     try{
-      const snap = await db.ref(KEY).once('value');
+      const snap = await db.ref(key).once('value');
       return snap.val();
     }catch(e){
       console.warn('Firebase read failed, falling back to localStorage:', e.message);
-      SYNC_OK=false; return localStorage.getItem(KEY)||null;
+      SYNC_OK=false; return localStorage.getItem(key)||null;
     }
   },
-  async set(v){
+  async set(v, key=KEY){
     if(!db){
-      if(!window.storage){ SYNC_OK=false; localStorage.setItem(KEY, v); return; }
-      try{ await window.storage.set(KEY, v, true); }
+      if(!window.storage){ SYNC_OK=false; localStorage.setItem(key, v); return; }
+      try{ await window.storage.set(key, v, true); }
       catch(e){ console.error(e); }
       return;
     }
-    try{ await db.ref(KEY).set(v); }
+    try{ await db.ref(key).set(v); }
     catch(e){
       console.warn('Firebase write failed, falling back to localStorage:', e.message);
-      SYNC_OK=false; localStorage.setItem(KEY, v);
+      SYNC_OK=false; localStorage.setItem(key, v);
     }
   }
 };
+
+/* =====================================================================
+   POOL CACHE — the player list, kept out of the synced draft state.
+===================================================================== */
+let poolCache = null;                 // Array<player> once loaded
+
+/* Everything except the player pool. This is what actually goes over the wire
+   on every pick. */
+function serializeState(s){
+  const out = {};
+  for(const k in s) if(k !== 'players') out[k] = s[k];
+  return JSON.stringify(out);
+}
+async function savePool(players){
+  poolCache = players;
+  await Store.set(JSON.stringify(players), POOL_KEY);
+}
+let poolPending = null;               // in-flight load, so we never fetch twice
+async function loadPool(){
+  if(poolCache) return poolCache;
+  if(poolPending) return poolPending;
+  poolPending = (async()=>{
+    const raw = await Store.get(POOL_KEY);
+    if(raw){ try{ poolCache = JSON.parse(raw); }catch(e){ poolCache = null; } }
+    poolPending = null;
+    return poolCache;
+  })();
+  return poolPending;
+}
+/* Re-attach the pool to a state object that arrived over the wire without it.
+   Also migrates a draft that was started on the old build (pool inline, no
+   pool key yet): the first upgraded device to see it republishes the pool so
+   later devices have something to load. */
+async function hydrateState(s){
+  if(!s) return s;
+  if(!s.players || !s.players.length){
+    await loadPool();
+    s.players = poolCache || [];
+  } else if(!poolCache){
+    await loadPool();
+    if(!poolCache) await savePool(s.players);
+  }
+  return s;
+}
 
 /* =====================================================================
    DEFAULT PLAYER POOL  (editable starter list — verify before real draft)
@@ -783,7 +831,6 @@ async function ensureSleeperCache(){
   })();
   return sleeperCachePending;
 }
-let muteSync=false;    // suppress polling re-render while we're mid-write
 let knownPickCount=null; // last picks.length we've already announced, for popup-on-sync
 
 function freshTeams(n){
@@ -1014,6 +1061,7 @@ async function applyImport(wb){
         const s=JSON.parse(stateJson);
         if(s && s.status && s.config && s.players && Array.isArray(s.picks)){
           state=s; localVersion=s.version;
+          await savePool(s.players);   // restored file carries the pool; republish it
           await commit();
           enterDraft();
           const pickCount=s.picks.filter(p=>!p.keeper).length;
@@ -1167,6 +1215,7 @@ $('#startBtn').onclick=async()=>{
   };
   teams.forEach(t=>state.queues[t.id]=[]);
   advanceKeepers();
+  await savePool(players);   // pool goes to its own key, once
   await commit();
   enterDraft();
 };
@@ -1174,37 +1223,117 @@ $('#startBtn').onclick=async()=>{
 $('#resumeBtn').onclick=async()=>{
   const raw=await Store.get();
   if(!raw){ toast('No existing draft found'); return; }
-  state=JSON.parse(raw); localVersion=state.version; enterDraft();
+  const s=JSON.parse(raw);
+  await hydrateState(s);
+  state=s; localVersion=state.version; enterDraft();
 };
 
 /* =====================================================================
-   COMMIT (write) — re-reads latest first to minimize clobbering
+   COMMIT (write)
+
+   commit()      — replaces the whole shared state. Used for start / import /
+                   resume, where this device is deliberately the authority.
+   applyAtomic() — for incremental changes (picks, undo, queues). Runs the
+                   mutation inside a Firebase transaction against the freshest
+                   remote state, so two devices acting at the same instant can
+                   never clobber each other's write.
 ===================================================================== */
 async function commit(){
-  muteSync=true;
   state.version=(state.version||0)+1;
   localVersion=state.version;
-  await Store.set(JSON.stringify(state));
-  muteSync=false;
+  await Store.set(serializeState(state));
+}
+
+/* Run fn() with the global `state` temporarily pointing at `s`, so all the
+   existing helpers (takenIds, currentOverall, advanceKeepers, …) can operate on
+   a candidate state without being rewritten. Single-threaded + synchronous, so
+   this is safe. */
+function withState(s, fn){
+  const prev = state;
+  state = s;
+  try{ return fn(); }
+  finally{ state = prev; }
+}
+
+/* mutate() runs against the freshest state and may mutate it in place.
+   Return false from mutate() to abort the write (e.g. the player was just
+   taken by someone else). Resolves to true if the change was committed. */
+async function applyAtomic(mutate){
+  // Local-only mode: no other writers, so no transaction needed.
+  if(!db || !SYNC_OK){
+    let ok;
+    withState(state, ()=>{ ok = mutate(); });
+    if(ok === false) return false;
+    await commit();
+    return true;
+  }
+
+  let applied = null;
+  let res;
+  try{
+    res = await db.ref(KEY).transaction(cur=>{
+      applied = null;
+      let fresh;
+      if(cur == null){
+        // Nothing remote yet — base off our own copy.
+        fresh = JSON.parse(serializeState(state));
+      } else {
+        try{ fresh = JSON.parse(cur); }
+        catch(e){ return; }   // unparseable remote value: abort rather than stomp it
+      }
+      fresh.players = poolCache || state.players || [];
+
+      let ok;
+      withState(fresh, ()=>{ ok = mutate(); });
+      if(ok === false) return;            // abort, no write
+
+      fresh.version = (fresh.version||0) + 1;
+      applied = fresh;
+      return serializeState(fresh);
+    }, undefined, /* applyLocally */ false);
+  }catch(e){
+    console.warn('Transaction failed, falling back to direct write:', e.message);
+    let ok;
+    withState(state, ()=>{ ok = mutate(); });
+    if(ok === false) return false;
+    await commit();
+    return true;
+  }
+
+  if(res && res.committed && applied){
+    state = applied;
+    localVersion = applied.version;
+    return true;
+  }
+  return false;
 }
 
 /* =====================================================================
    POLLING SYNC
 ===================================================================== */
+/* Adopt a state that arrived from shared storage. Writes we made ourselves are
+   ignored by the version check, so there is no need to mute the listener while
+   writing — which means another device's pick can never be dropped on the floor. */
+async function adoptIncoming(raw){
+  if(!raw) return false;
+  let incoming;
+  try{ incoming=JSON.parse(raw); }catch(e){ return false; }
+  if(incoming.version===localVersion) return false;
+  await hydrateState(incoming);
+  state=incoming; localVersion=incoming.version;
+  if(state.status==='drafting'||state.status==='done'){
+    if($('#setupView').classList.contains('hidden')){ announceNewPicks(); renderDraft(); }
+    else enterDraft();
+  }
+  return true;
+}
+
 async function poll(){
   setSync(true);
-  if(muteSync) return;
   const raw=await Store.get();
   if(!raw){ setSync(SYNC_OK); return; }
   try{
-    const incoming=JSON.parse(raw);
-    if(incoming.version!==localVersion){
-      state=incoming; localVersion=incoming.version;
-      if(state.status==='drafting'||state.status==='done'){
-        if($('#setupView').classList.contains('hidden')){ announceNewPicks(); renderDraft(); }
-        else enterDraft();
-      }
-    }
+    await adoptIncoming(raw);
     setSync(SYNC_OK);
   }catch(e){ setSync(false); }
 }
@@ -1215,20 +1344,12 @@ function setSync(ok){
   else { dot.className='dot warn'; txt.textContent='Reconnecting…'; }
 }
 if(db){
-  db.ref(KEY).on('value', snap=>{
-    if(muteSync) return;
+  db.ref(KEY).on('value', async snap=>{
     setSync(true);
     const raw=snap.val();
     if(!raw) return;
     try{
-      const incoming=JSON.parse(raw);
-      if(incoming.version!==localVersion){
-        state=incoming; localVersion=incoming.version;
-        if(state.status==='drafting'||state.status==='done'){
-          if($('#setupView').classList.contains('hidden')){ announceNewPicks(); renderDraft(); }
-          else enterDraft();
-        }
-      }
+      await adoptIncoming(raw);
     }catch(e){ setSync(false); }
   }, err=>{
     console.warn('Firebase listener error, falling back to localStorage:', err.message);
@@ -1579,34 +1700,40 @@ function renderQueue(){
       <button class="mini btn ghost danger rm">✕</button>`;
     row.querySelector('.up').onclick=()=>moveQueue(id,-1);
     row.querySelector('.dn').onclick=()=>moveQueue(id,1);
-    row.querySelector('.rm').onclick=()=>{ state.queues[queueTeamSel]=q.filter(x=>x!==id); commit().then(renderQueue); };
+    row.querySelector('.rm').onclick=()=>{
+      const tid=queueTeamSel;
+      applyAtomic(()=>{ state.queues[tid]=(state.queues[tid]||[]).filter(x=>x!==id); return true; }).then(renderQueue);
+    };
     list.appendChild(row);
   });
 }
 async function addToQueue(pid){
-  const arr=state.queues[queueTeamSel]||(state.queues[queueTeamSel]=[]);
-  if(!arr.includes(pid)) arr.push(pid);
-  await commit(); renderQueue();
-  toast('Queued for '+teamById(queueTeamSel).name);
+  const tid=queueTeamSel;
+  await applyAtomic(()=>{
+    const arr=state.queues[tid]||(state.queues[tid]=[]);
+    if(!arr.includes(pid)) arr.push(pid);
+    return true;
+  });
+  renderQueue();
+  toast('Queued for '+teamById(tid).name);
 }
 async function moveQueue(pid,dir){
-  const arr=state.queues[queueTeamSel]; const i=arr.indexOf(pid); const j=i+dir;
-  if(j<0||j>=arr.length) return;
-  [arr[i],arr[j]]=[arr[j],arr[i]];
-  await commit(); renderQueue();
+  const tid=queueTeamSel;
+  await applyAtomic(()=>{
+    const arr=state.queues[tid]||[]; const i=arr.indexOf(pid); const j=i+dir;
+    if(i<0||j<0||j>=arr.length) return false;
+    [arr[i],arr[j]]=[arr[j],arr[i]];
+    return true;
+  });
+  renderQueue();
 }
 
 /* =====================================================================
    ACTIONS — draft / autopick / undo / reset
 ===================================================================== */
-async function syncBeforeWrite(){
-  const raw=await Store.get();
-  if(raw){ try{ const inc=JSON.parse(raw); if(inc.version>localVersion){ state=inc; localVersion=inc.version; } }catch(e){} }
-}
-async function draftPlayer(pid){
-  await syncBeforeWrite();
-  if(isDone()){ toast('Draft is complete'); renderDraft(); return; }
-  if(takenIds().has(pid)){ toast('Already drafted — board updated'); renderDraft(); return; }
+/* Applies a pick to whatever `state` currently points at (inside applyAtomic
+   that is the freshest remote copy). Caller has already checked it is legal. */
+function applyPick(pid){
   const ov=currentOverall();
   const {round}=teamForPick(ov);
   const team=ownerForPick(ov);
@@ -1615,35 +1742,79 @@ async function draftPlayer(pid){
   state.pickStartedAt=Date.now();
   if(isDone()) state.status='done';
   // remove from everyone's queue
-  Object.keys(state.queues).forEach(tid=>{ state.queues[tid]=state.queues[tid].filter(x=>x!==pid); });
-  await commit();
+  Object.keys(state.queues).forEach(tid=>{ state.queues[tid]=(state.queues[tid]||[]).filter(x=>x!==pid); });
+  return team;
+}
+
+async function draftPlayer(pid){
+  let team=null, reason=null;
+  const ok = await applyAtomic(()=>{
+    reason=null;
+    if(isDone()){ reason='done'; return false; }
+    if(takenIds().has(pid)){ reason='taken'; return false; }
+    team = applyPick(pid);
+    return true;
+  });
+  if(!ok){
+    if(reason==='done') toast('Draft is complete');
+    else if(reason==='taken') toast('Already drafted — board updated');
+    else toast('Another device just wrote — board updated');
+    renderDraft();
+    return;
+  }
   const pl=playerById(pid);
   knownPickCount=state.picks.length;
   announcePick(team,pl);
   renderDraft();
 }
+
 async function autopick(){
-  await syncBeforeWrite();
-  if(isDone()) return;
-  const team=ownerForPick(currentOverall());
-  const taken=takenIds();
-  let pid=(state.queues[team.id]||[]).find(id=>!taken.has(id));
-  if(!pid){ const best=state.players.filter(p=>!taken.has(p.id)); if(!best.length){toast('No players left');return;} pid=best[0].id; }
-  await draftPlayer(pid);
+  // The whole selection happens inside the transaction, so the player we choose
+  // cannot be taken between choosing and writing.
+  let team=null, pl=null, empty=false;
+  const ok = await applyAtomic(()=>{
+    empty=false;
+    if(isDone()) return false;
+    const taken=takenIds();
+    const onClock=ownerForPick(currentOverall());
+    let pid=(state.queues[onClock.id]||[]).find(id=>!taken.has(id));
+    if(!pid){
+      const best=state.players.filter(p=>!taken.has(p.id));
+      if(!best.length){ empty=true; return false; }
+      pid=best[0].id;
+    }
+    team = applyPick(pid);
+    pl = playerById(pid);
+    return true;
+  });
+  if(!ok){
+    if(empty) toast('No players left');
+    renderDraft();
+    return;
+  }
+  knownPickCount=state.picks.length;
+  announcePick(team,pl);
+  renderDraft();
 }
 $('#autopickBtn').onclick=autopick;
 $('#undoBtn').onclick=()=>confirmModal('Undo last pick?','Removes the most recent selection and puts the player back in the pool. Keepers stay locked.',async()=>{
-  await syncBeforeWrite();
-  if(!state.picks.some(p=>!p.keeper)) return;
-  while(state.picks.length && state.picks[state.picks.length-1].keeper) state.picks.pop();
-  if(state.picks.length) state.picks.pop();
-  state.status='drafting'; state.pickStartedAt=Date.now();
-  await commit(); renderDraft();
+  await applyAtomic(()=>{
+    if(!state.picks.some(p=>!p.keeper)) return false;
+    while(state.picks.length && state.picks[state.picks.length-1].keeper) state.picks.pop();
+    if(state.picks.length) state.picks.pop();
+    state.status='drafting'; state.pickStartedAt=Date.now();
+    return true;
+  });
+  knownPickCount=state.picks.length;
+  renderDraft();
 });
 $('#resetBtn').onclick=()=>confirmModal('Reset entire draft?','Clears every pick for everyone. Player pool, teams, keepers, and queues stay. This cannot be undone.',async()=>{
-  await syncBeforeWrite();
-  state.picks=[]; advanceKeepers(); state.status='drafting'; state.pickStartedAt=Date.now();
-  await commit(); renderDraft();
+  await applyAtomic(()=>{
+    state.picks=[]; advanceKeepers(); state.status='drafting'; state.pickStartedAt=Date.now();
+    return true;
+  });
+  knownPickCount=state.picks.length;
+  renderDraft();
 });
 $('#editPoolBtn').onclick=()=>confirmModal('Back to setup?','Returns you to the setup screen. Your current draft stays saved — use “Resume existing draft” to come back to it.',()=>{
   $('#draftView').classList.add('hidden'); $('#setupView').classList.remove('hidden');
@@ -1876,6 +2047,7 @@ $$('#mobileDraftTabs .mtab').forEach(btn=>{
     try{
       const s=JSON.parse(raw);
       if(s&&s.status&&(s.status==='drafting'||s.status==='done')){
+        await hydrateState(s);
         state=s; localVersion=s.version; enterDraft();
       }
     }catch(e){}
